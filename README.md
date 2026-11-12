@@ -10,6 +10,10 @@ back to all white, and the last word stays orange until the line ends. Every bui
 
 
 
+https://github.com/user-attachments/assets/ed297f49-1db5-403c-a0a7-5e72fb92fe9c
+
+
+
 
 ## Why a panel and not a `.wasm` effect
 
