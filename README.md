@@ -50,11 +50,9 @@ you pick the file with **one click**.
 ```
 Captions
   Path  [ /home/you/Videos/MyProject            ] [Go]
-  [ Stuck in the Dinosaur Age - Captions.srt ]  [ Untitled - Captions.srt ]
-  [ Untitled - EffectCraft Captions.srt      ]  [ Untitled - word timings.json ]
-  [ Untitled - word timings.srt              ]  [ * my-captions.json ]
+  [ word timings.json ] [my-captions.json ]
   Showing /home/you/Videos/MyProject — click a file to load it.
-  15 lines · 68 words · 35.1 s · Untitled - word timings.json (8.0 KB)
+  15 lines · 68 words · 35.1 s · word timings.json (8.0 KB)
   Preview:
    1.  0:00.0  Your time machine broke, and now
    2.  0:02.4  you're stuck in the age of dinosaurs.
