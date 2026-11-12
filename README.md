@@ -135,6 +135,15 @@ This is the format produced by the `word-timing-json` skill (`<name> - word timi
 `filmcraft-captions` skill's transcription step (`caption_data30.json`), so the same measured timings
 can be replayed exactly.
 
+
+## Audio or Video to JSON
+
+Use the webapp. https://autocaption46.web.app/
+
+You can also run it locally by downloading the webapp folder.
+
+
+
 ## Notes and traps
 
 - **There is no native file dialog in this build.** EffectCraft 0.24 ships

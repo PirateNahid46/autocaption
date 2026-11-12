@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AutoCaption Web — word-timing JSON</title>
+<style>
+  :root {
+    --bg: #12131a; --card: #1b1d27; --line: #2a2d3a; --text: #e8e9ef;
+    --muted: #9aa0b4; --accent: #fc9868; --accent-dim: #b87049; --ok: #7fd1a0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    padding: 22px 28px 14px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+  }
+  h1 { font-size: 19px; margin: 0; letter-spacing: .06em; }
+  header span { color: var(--muted); font-size: 13px; }
+  main { display: grid; grid-template-columns: minmax(320px, 460px) 1fr; gap: 20px;
+         padding: 22px 28px 60px; align-items: start; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .1em;
+             color: var(--muted); margin: 0 0 12px; }
+  .card + .card { margin-top: 20px; }
+  .small { color: var(--muted); font-size: 12.5px; }
+  .drop {
+    border: 1.5px dashed var(--line); border-radius: 10px; padding: 30px 16px;
+    text-align: center; cursor: pointer; transition: .15s;
+  }
+  .drop:hover, .drop.over { border-color: var(--accent-dim); background: #20222e; }
+  .drop strong { color: var(--accent); font-weight: 600; }
+  button, .btn {
+    font: inherit; color: var(--text); background: #262938; border: 1px solid var(--line);
+    border-radius: 8px; padding: 9px 14px; cursor: pointer; text-decoration: none;
+    display: inline-block;
+  }
+  button:hover:not(:disabled), .btn:hover { border-color: var(--accent-dim); }
+  button:disabled { opacity: .45; cursor: default; }
+  .primary { background: var(--accent); color: #201409; border-color: var(--accent); font-weight: 600; }
+  .primary:hover:not(:disabled) { background: #ffa87c; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 12px 0; }
+  label.field { display: block; font-size: 12px; color: var(--muted); }
+  input, select, textarea {
+    width: 100%; margin-top: 4px; background: #14161f; color: var(--text);
+    border: 1px solid var(--line); border-radius: 7px; padding: 8px 9px; font: inherit;
+  }
+  textarea { min-height: 150px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+             font-size: 12.5px; resize: vertical; }
+  details { margin: 14px 0; border-top: 1px solid var(--line); padding-top: 10px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  .progress { margin-top: 14px; }
+  .bar { height: 7px; background: #14161f; border-radius: 4px; overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+  .status { margin-top: 7px; color: var(--muted); font-size: 12.5px; }
+  .status.error { color: #ff8b7a; }
+  .status.ok { color: var(--ok); }
+  .summary { display: flex; gap: 22px; flex-wrap: wrap; margin-bottom: 14px; }
+  .summary b { display: block; font-size: 20px; font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; }
+  td.t { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .scroll { max-height: 46vh; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+  .hidden { display: none !important; }
+  code { background: #14161f; padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+  .hint { color: var(--muted); font-size: 12.5px; margin: 8px 0 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>AUTOCAPTION</h1>
+  <span>word-timing JSON for the EffectCraft panel — everything runs on this machine</span>
+</header>
+
+<main>
+  <div>
+    <section class="card">
+      <h2>1 · Media</h2>
+      <div class="drop" id="drop">
+        <strong>Drop an audio or video file</strong><br>
+        <span class="small">or click to choose · mp4 · mov · mp3 · m4a · wav</span>
+        <input type="file" id="file" hidden>
+      </div>
+      <p class="small" id="fileinfo">No file chosen.</p>
+
+      <label class="field">Run the transcription on
+        <select id="where">
+          <option value="browser" selected>This browser (your own CPU)</option>
+          <option value="server">A server (this machine or the cloud)</option>
+        </select>
+      </label>
+      <p class="hint" id="modeNote">In the browser: the file never leaves this computer. The model is
+        downloaded once (40–250 MB) and then cached by the browser.</p>
+
+      <details>
+        <summary>Options</summary>
+        <div class="grid">
+          <label class="field">Model
+            <select id="model">
+              <option value="Xenova/whisper-base.en" selected>whisper-base.en — balanced</option>
+              <option value="Xenova/whisper-tiny.en">whisper-tiny.en — fastest</option>
+              <option value="Xenova/whisper-base">whisper-base — multilingual</option>
+              <option value="Xenova/whisper-small">whisper-small — most accurate</option>
+            </select>
+          </label>
+          <label class="field">Server model
+            <select id="serverModel">
+              <option value="small.en" selected>small.en</option>
+              <option value="small">small</option>
+              <option value="medium">medium</option>
+              <option value="large-v3">large-v3</option>
+            </select>
+          </label>
+          <label class="field">Language
+            <select id="language">
+              <option value="" selected>Auto-detect</option>
+              <option value="en">English</option><option value="de">German</option>
+              <option value="fr">French</option><option value="es">Spanish</option>
+              <option value="it">Italian</option><option value="nl">Dutch</option>
+              <option value="pt">Portuguese</option><option value="tr">Turkish</option>
+              <option value="pl">Polish</option><option value="ru">Russian</option>
+            </select>
+          </label>
+          <label class="field">Words per line
+            <input id="max_words" type="number" value="7" min="1" max="20">
+          </label>
+          <label class="field">Characters per line
+            <input id="max_chars" type="number" value="38" min="10" max="120">
+          </label>
+          <label class="field">Silence that ends a line (s)
+            <input id="pause" type="number" value="1.0" step="0.1" min="0.1">
+          </label>
+          <label class="field">Line lead-in / hold (s)
+            <input id="leadhold" type="text" value="0.05 / 0.7">
+          </label>
+        </div>
+      </details>
+
+      <button class="primary" id="go" disabled>Transcribe</button>
+      <div class="progress hidden" id="progressBox">
+        <div class="bar"><i id="bar"></i></div>
+        <div class="status" id="status">Working…</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>2 · Result</h2>
+      <div id="result" class="small">Nothing yet — transcribe a file or paste an existing one below.</div>
+      <div class="row hidden" id="actions" style="margin-top:14px">
+        <a class="btn primary" id="dlJson" download="word timings.json">Download JSON</a>
+        <a class="btn" id="dlSrt" download="word timings.srt">Download SRT</a>
+        <button id="copyJson">Copy JSON</button>
+      </div>
+    </section>
+  </div>
+
+  <div>
+    <section class="card">
+      <h2>3 · Caption lines</h2>
+      <div class="scroll"><table id="table"><thead><tr>
+        <th>#</th><th>Start</th><th>End</th><th>Text</th><th>Words</th>
+      </tr></thead><tbody></tbody></table></div>
+      <p class="hint">Paste this JSON into the EffectCraft panel (<code>Window ▸ AutoCaption.jsx</code>)
+        with <b>Use Pasted Text</b>, or keep it next to the project and click the file in the panel.</p>
+    </section>
+
+    <section class="card">
+      <h2>4 · Existing JSON or SRT</h2>
+      <p class="small">Paste a word-timing JSON or an SRT to check it and download a normalised JSON.</p>
+      <textarea id="paste" placeholder='[{"start":0,"end":2.5,"text":"…","words":[{"text":"…","t0":0,"t1":0.3}]}]  or  1&#10;00:00:00,000 --> 00:00:02,500&#10;Your time machine broke'></textarea>
+      <div class="row" style="margin-top:10px">
+        <button id="convert">Convert &amp; check</button>
+        <span class="small" id="convertStatus"></span>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script src="caption-core.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+let chosen = null;
+let lastResult = null;
+let serverAvailable = false;
+
+/* file picking + drag & drop */
+const drop = $("drop"), fileInput = $("file");
+drop.addEventListener("click", () => fileInput.click());
+fileInput.addEventListener("change", () => { if (fileInput.files[0]) pick(fileInput.files[0]); });
+["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => { const f = e.dataTransfer.files[0]; if (f) pick(f); });
+
+function pick(f) {
+  chosen = f;
+  $("fileinfo").textContent = f.name + " · " + (f.size / 1048576).toFixed(1) + " MB";
+  $("go").disabled = false;
+}
+
+/* helpers */
+const ts = (t) => {
+  const m = Math.floor(t / 60), s = t - m * 60;
+  return m + ":" + (s < 10 ? "0" : "") + s.toFixed(1);
+};
+function showResult(res, label) {
+  lastResult = res;
+  const body = $("table").querySelector("tbody");
+  body.innerHTML = "";
+  (res.json || []).forEach((l, i) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = "<td class='t'>" + (i + 1) + "</td><td class='t'>" + ts(l.start) +
+      "</td><td class='t'>" + ts(l.end) + "</td><td>" + escapeHtml(l.text) +
+      "</td><td class='t'>" + (l.words ? l.words.length : 0) + "</td>";
+    body.appendChild(tr);
+  });
+  const sum = $("result");
+  sum.innerHTML = "<div class='summary'>" +
+    "<div><b>" + res.lines + "</b><span class='small'>lines</span></div>" +
+    "<div><b>" + res.words + "</b><span class='small'>words</span></div>" +
+    "<div><b>" + (res.duration ? res.duration.toFixed(1) + " s" : "—") + "</b><span class='small'>media</span></div>" +
+    "<div><b>" + (res.model || res.kind || "") + "</b><span class='small'>" + (label || "") + "</span></div>" +
+    "</div>";
+  const blob = new Blob([JSON.stringify(res.json, null, 2)], { type: "application/json" });
+  const srtBlob = new Blob([res.srt || ""], { type: "text/plain" });
+  $("dlJson").href = URL.createObjectURL(blob);
+  $("dlSrt").href = URL.createObjectURL(srtBlob);
+  $("dlJson").setAttribute("download", (chosen ? chosen.name.replace(/\.[^.]+$/, "") : "captions") + " - word timings.json");
+  $("dlSrt").setAttribute("download", (chosen ? chosen.name.replace(/\.[^.]+$/, "") : "captions") + " - word timings.srt");
+  $("actions").classList.remove("hidden");
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+/* transcribe */
+$("go").addEventListener("click", async () => {
+  if (!chosen) return;
+  const [lead, hold] = ($("leadhold").value.split("/") || ["0.05", "0.7"]).map(v => parseFloat(v) || 0);
+  const opts = {
+    maxWords: +$("max_words").value || 7,
+    maxChars: +$("max_chars").value || 38,
+    pause: +$("pause").value || 1.0,
+    lead: lead, hold: hold,
+    language: $("language").value || null
+  };
+  $("go").disabled = true;
+  $("progressBox").classList.remove("hidden");
+  $("status").className = "status";
+  if ($("where").value === "browser") {
+    try { await transcribeInBrowser(opts); }
+    catch (e) { $("status").className = "status error"; $("status").textContent = String(e.message || e); $("go").disabled = false; }
+    return;
+  }
+  const q = new URLSearchParams({
+    name: chosen.name, model: $("serverModel").value, language: opts.language || "",
+    max_words: opts.maxWords, max_chars: opts.maxChars,
+    pause: opts.pause, lead: lead, hold: hold
+  });
+  $("status").textContent = "Uploading…";
+  try {
+    const r = await fetch("/api/transcribe?" + q.toString(), { method: "POST", body: chosen });
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
+    // a cloud function answers with the result straight away; the local server
+    // hands out a job id and the result follows
+    if (data.result) {
+      $("status").className = "status ok";
+      $("status").textContent = "Done — " + data.result.lines + " lines, " + data.result.words + " words.";
+      showResult(data.result, "model");
+      $("go").disabled = false;
+      return;
+    }
+    if (!data.job) throw new Error("the server did not accept the file");
+    poll(data.job);
+  } catch (e) {
+    $("status").className = "status error";
+    $("status").textContent = String(e.message || e);
+    $("go").disabled = false;
+  }
+});
+
+/* ------------------------------------------------- transcribe in the browser */
+let worker = null;
+
+function pickDevice() {
+  return (navigator.gpu && navigator.gpu.requestAdapter) ? "webgpu" : "wasm";
+}
+
+function getWorker() {
+  if (worker) return worker;
+  worker = new Worker("whisper-worker.js", { type: "module" });
+  worker.onmessage = (e) => {
+    const msg = e.data || {};
+    if (msg.type === "progress") {
+      if (typeof msg.progress === "number") {
+        $("bar").style.width = Math.max(3, Math.min(99, msg.progress)) + "%";
+      }
+      $("status").textContent = msg.message || "Working…";
+    } else if (msg.type === "ready") {
+      $("bar").style.width = "30%";
+      $("status").textContent = "Model ready (" + msg.device + ") — transcribing…";
+    } else if (msg.type === "done") {
+      $("bar").style.width = "100%";
+      $("status").className = "status ok";
+      $("status").textContent = "Done — " + msg.result.lines + " lines, " + msg.result.words +
+        " words, on your " + (msg.result.device || "CPU") + ".";
+      msg.result.device = workerDevice;
+      showResult(msg.result, "in this browser");
+      $("go").disabled = false;
+    } else if (msg.type === "error") {
+      $("status").className = "status error";
+      $("status").textContent = msg.message;
+      $("go").disabled = false;
+    }
+  };
+  worker.onerror = (e) => {
+    $("status").className = "status error";
+    $("status").textContent = "The worker failed: " + (e.message || e);
+    $("go").disabled = false;
+  };
+  return worker;
+}
+
+let workerDevice = "cpu";
+
+async function transcribeInBrowser(opts) {
+  $("status").textContent = "Decoding the audio…";
+  const audio = await decodeTo16k(chosen);
+  workerDevice = pickDevice();
+  const model = $("model").value;
+  const w = getWorker();
+  w.postMessage({ type: "load", model: model, device: workerDevice });
+  await new Promise((resolve) => {
+    const handler = (e) => {
+      const m = e.data || {};
+      if (m.type === "ready") { w.removeEventListener("message", handler); resolve(); }
+      else if (m.type === "error") { w.removeEventListener("message", handler); throw new Error(m.message); }
+    };
+    w.addEventListener("message", handler);
+  });
+  w.postMessage({ type: "transcribe", audio: audio, options: opts, model: model });
+}
+
+async function decodeTo16k(file) {
+  const buf = await file.arrayBuffer();
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) throw new Error("This browser cannot decode audio (no Web Audio API).");
+  const ctx = new Ctx();
+  let decoded;
+  try {
+    decoded = await ctx.decodeAudioData(buf);
+  } catch (e) {
+    ctx.close();
+    throw new Error("This browser cannot decode that file format — try mp3, wav, m4a or mp4.");
+  }
+  ctx.close();
+  const rate = 16000;
+  const length = Math.max(1, Math.ceil(decoded.duration * rate));
+  const off = new OfflineAudioContext(1, length, rate);
+  const src = off.createBufferSource();
+  src.buffer = decoded;
+  src.connect(off.destination);
+  src.start();
+  const rendered = await off.startRendering();
+  return rendered.getChannelData(0);
+}
+
+async function poll(jid) {
+  const r = await fetch("/api/job?id=" + jid);
+  const job = await r.json();
+  $("bar").style.width = (job.progress || 0) + "%";
+  $("status").textContent = job.message || job.state;
+  if (job.state === "done") {
+    $("status").className = "status ok";
+    $("status").textContent = "Done — " + job.result.lines + " lines, " + job.result.words + " words.";
+    showResult(job.result, "model");
+    $("go").disabled = false;
+    return;
+  }
+  if (job.state === "error") {
+    $("status").className = "status error";
+    $("status").textContent = job.message;
+    $("go").disabled = false;
+    return;
+  }
+  setTimeout(() => poll(jid), 700);
+}
+
+/* convert pasted JSON / SRT */
+$("convert").addEventListener("click", async () => {
+  const text = $("paste").value;
+  $("convertStatus").className = "small";
+  $("convertStatus").textContent = "Reading…";
+  try {
+    let data = null;
+    if (serverAvailable) {
+      const r = await fetch("/api/convert", { method: "POST", body: text });
+      data = await r.json();
+      if (data.error) throw new Error(data.error);
+    } else {
+      data = self.CaptionCore.convertText(text);   // no server needed
+    }
+    showResult(data, "pasted");
+    $("convertStatus").className = "small";
+    $("convertStatus").textContent = data.lines + " lines, " + data.words + " words — ready.";
+  } catch (e) {
+    $("convertStatus").className = "small";
+    $("convertStatus").style.color = "#ff8b7a";
+    $("convertStatus").textContent = String(e.message || e);
+  }
+});
+
+/* is there a server (this machine or the cloud) behind this page? */
+(async () => {
+  try {
+    const r = await fetch("/api/health", { cache: "no-store" });
+    serverAvailable = r.ok;
+  } catch (e) {
+    serverAvailable = false;
+  }
+  const opt = $("where").querySelector('option[value="server"]');
+  if (!serverAvailable) {
+    $("where").value = "browser";
+    opt.disabled = true;
+    opt.textContent = "A server — not reachable from here";
+    $("modeNote").textContent = "In the browser: the file never leaves this computer. The model is " +
+      "downloaded once (40–250 MB) and then cached by the browser.";
+  } else {
+    $("modeNote").textContent = "In the browser: the file never leaves this computer. On a server: " +
+      "the file is uploaded to the machine that does the transcription.";
+  }
+})();
+
+/* copy */
+$("copyJson").addEventListener("click", async () => {
+  if (!lastResult) return;
+  const text = JSON.stringify(lastResult.json, null, 2);
+  try {
+    await navigator.clipboard.writeText(text);
+    $("copyJson").textContent = "Copied";
+    setTimeout(() => ($("copyJson").textContent = "Copy JSON"), 1400);
+  } catch (e) {
+    const ta = document.createElement("textarea");
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    document.execCommand("copy"); ta.remove();
+  }
+});
+</script>
+</body>
+</html>
