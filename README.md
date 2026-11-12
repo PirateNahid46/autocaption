@@ -8,10 +8,6 @@ It creates **one text layer per caption line**, each with a native text animator
 range selector in **Index / Words** mode, hold-keyed per word. The current word is orange, pauses go
 back to all white, and the last word stays orange until the line ends. Every build is one undo step.
 
-<video width="720" height="1280" controls>
-  <source src="./demo/DEMO.mp4" type="video/mp4">
-  Your browser does not support the video tag.
-</video>
 
 
 
