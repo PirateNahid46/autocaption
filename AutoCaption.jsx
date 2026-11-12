@@ -1,6 +1,6 @@
 /*
-    Word-Highlight Captions for EffectCraft
-    Version 1.7.0
+    AutoCaption for EffectCraft
+    Version 1.8.0
 
     Builds the Descript-style captions measured from "Stuck in the Dinosaur Age":
     Poppins SemiBold, white, one centred line low in the frame, the spoken word
@@ -14,7 +14,7 @@
     Install as a ScriptUI panel (Window menu):
       File > Scripts > Install ScriptUI Panel... and choose this file, or install
       the bundle folder with Effect > Install Effect Plug-in... (the .jsx becomes
-      a panel), then open Window > Word-Highlight Captions.jsx.
+      a panel), then open Window > AutoCaption.jsx.
 
     Caption sources:
       - Word-timing JSON: exact per-word times, e.g.
@@ -33,9 +33,9 @@
 */
 
 (function (thisObj) {
-    var VERSION = "1.7.0";
-    var PANEL_TITLE = "Word-Highlight Captions";
-    var SECTION = "Word-Highlight Captions";
+    var VERSION = "1.8.0";
+    var PANEL_TITLE = "AutoCaption";
+    var SECTION = "AutoCaption";
     var HOLD = 6614;              // KeyframeInterpolationType.HOLD
     var CENTER_JUSTIFY = 7414;    // ParagraphJustification.CENTER_JUSTIFY
     var SIZE_RATIO = 0.0371;      // 26.7 px at 720x1280
@@ -296,7 +296,7 @@
         var x = comp.width / 2;
 
         var ownsUndoGroup = !opts.grouped;
-        if (ownsUndoGroup) app.beginUndoGroup("Word-Highlight Captions");
+        if (ownsUndoGroup) app.beginUndoGroup("AutoCaption");
         try {
             if (opts.replace) {
                 for (var i = comp.numLayers; i >= 1; i--) {
@@ -427,7 +427,7 @@
         head.orientation = "column";
         head.alignChildren = ["left", "top"];
         head.spacing = 1;
-        var title = head.add("statictext", undefined, "WORD-HIGHLIGHT CAPTIONS");
+        var title = head.add("statictext", undefined, "AUTOCAPTION");
         try { title.graphics.font = ScriptUI.newFont("dialog", "BOLD", 12); } catch (e) {}
         head.add("statictext", undefined, "Poppins SemiBold · white line · the spoken word in orange");
 
@@ -919,7 +919,7 @@
                 saveOptions();
                 var comp;
                 var result;
-                app.beginUndoGroup("Word-Highlight Captions");
+                app.beginUndoGroup("AutoCaption");
                 try {
                     comp = makeNewComp(lines);
                     opts.grouped = true;

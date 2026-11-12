@@ -1,4 +1,4 @@
-# Word-Highlight Captions for EffectCraft
+# AutoCaption for EffectCraft
 
 A ScriptUI panel that builds the Descript-style captions measured from *Stuck in the Dinosaur Age*:
 **Poppins SemiBold, white, one centred line low in the frame, the spoken word turning orange
@@ -19,13 +19,13 @@ menu. A `.wasm` effect cannot create layers or keyframes and has no font rasteri
 ## Install
 
 **Recommended:** in EffectCraft, choose **File ▸ Scripts ▸ Install ScriptUI Panel…**, select
-`Word-Highlight Captions.jsx`, then open **Window ▸ Word-Highlight Captions.jsx**.
+`AutoCaption.jsx`, then open **Window ▸ AutoCaption.jsx**.
 
 **As a bundle:** `Effect ▸ Install Effect Plug-in…` can install this folder; every top-level `.jsx`
 becomes a ScriptUI panel (the README and samples are ignored). From a terminal:
 
 ```bash
-effectcraft-cli exec effect.plugins.install '{"folder":"/path/to/effectcraft-word-highlight-captions"}'
+effectcraft-cli exec effect.plugins.install '{"folder":"/path/to/effectcraft-autocaption"}'
 ```
 
 The panel is copied to `Scripts/ScriptUI Panels/` in the EffectCraft settings folder
@@ -33,8 +33,8 @@ The panel is copied to `Scripts/ScriptUI Panels/` in the EffectCraft settings fo
 Window menu.
 
 **Already installed on this machine:** the panel is in
-`~/.config/effectcraft/Scripts/ScriptUI Panels/Word-Highlight Captions.jsx`. Start (or restart)
-EffectCraft and open **Window ▸ Word-Highlight Captions.jsx**.
+`~/.config/effectcraft/Scripts/ScriptUI Panels/AutoCaption.jsx`. Start (or restart) EffectCraft and open
+**Window ▸ AutoCaption.jsx**.
 
 Poppins SemiBold must be installed for the exact look. If it is missing, EffectCraft substitutes another
 font; install `Poppins-SemiBold.ttf` from the `filmcraft-captions` skill assets, or edit the Font/Style
@@ -153,15 +153,15 @@ can be replayed exactly.
 - The panel uses the script enum values for the selector: `Units = 2` means Index and `Based On = 3`
   means Words (they are 1-based in the scripting API, 0-based in the engine commands).
 - The panel saves its last style values and loaded file with `app.settings` (section
-  `Word-Highlight Captions`); the folder itself is not restored — the browser always starts in the
+  `AutoCaption`); the folder itself is not restored — the browser always starts in the
   project's folder.
 
 ## Files
 
 ```
-effectcraft-word-highlight-captions/
-  Word-Highlight Captions.jsx      the panel (self-contained)
+effectcraft-autocaption/
+  AutoCaption.jsx              the panel (self-contained)
   README.md
-  example.srt                      a small SRT to try
-  word-timings.example.json        a small exact-timing example
+  example.srt                  a small SRT to try
+  word-timings.example.json    a small exact-timing example
 ```
