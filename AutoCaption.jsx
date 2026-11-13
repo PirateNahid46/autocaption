@@ -1,6 +1,6 @@
 /*
     AutoCaption for EffectCraft
-    Version 1.8.0
+    Version 3.1.0
 
     Builds the Descript-style captions measured from "Stuck in the Dinosaur Age":
     Poppins SemiBold, white, one centred line low in the frame, the spoken word
@@ -33,7 +33,7 @@
 */
 
 (function (thisObj) {
-    var VERSION = "1.8.0";
+    var VERSION = "3.1.0";
     var PANEL_TITLE = "AutoCaption";
     var SECTION = "AutoCaption";
     var HOLD = 6614;              // KeyframeInterpolationType.HOLD
@@ -42,7 +42,12 @@
     var BASELINE_PCT = 85.6;      // 1096 px at 1280 tall
     var MAX_PASTE = 400000;       // characters; bigger files must be loaded from disk
     var MAX_PREVIEW = 80;         // preview rows
-    var MAX_FILE_BUTTONS = 12;    // file buttons shown at once
+    var MAX_FILE_BUTTONS = 8;     // file buttons shown at once
+    var MEDIA_EXTS = /\.(mp4|m4v|mov|mkv|webm|avi|mpg|mpeg|m4a|mp3|aac|wav|flac|ogg|opus|wma|aif|aiff)$/i;
+    var TRANSCRIBER_HOST = "127.0.0.1";
+    var TRANSCRIBER_PORT = 8787;
+    var WEBAPP_HOST = "127.0.0.1";
+    var WEBAPP_PORT = 8765;
     var STATUS_CHARS = 240;       // keeps the status line from stretching the panel
 
     // ------------------------------------------------------------------ helpers
@@ -409,12 +414,33 @@
         return "";
     }
 
-    function buildUI(thisObj) {
-        // EffectCraft 0.24's File.openDialog is a stub that always returns null:
-        // there is no native file dialog, so the panel browses folders itself.
-        var hasNativeDialog = true;
-        try { hasNativeDialog = !/return\s+null/.test(String(File.openDialog)); } catch (e) {}
+    // The engines, with their models. The service reports the same list (plus
+    // which keys it holds); this is the fallback when the service is down.
+    var ENGINES = {
+        deepgram: { title: "Deepgram", env: "DEEPGRAM_API_KEY",
+                    models: ["whisper-large", "nova-3"],
+                    note: "Deepgram — $200 free credit, the audio is uploaded" },
+        groq: { title: "Groq", env: "GROQ_API_KEY",
+                models: ["whisper-large-v3-turbo"],
+                note: "Groq — free tier, the audio is uploaded" },
+        assemblyai: { title: "AssemblyAI", env: "ASSEMBLYAI_API_KEY",
+                      models: ["best", "nano"],
+                      note: "AssemblyAI — free tier, the audio is uploaded" },
+        openai: { title: "OpenAI", env: "OPENAI_API_KEY",
+                  models: ["whisper-1"],
+                  note: "OpenAI — paid, the audio is uploaded" },
+        local: { title: "This machine", env: null,
+                 models: ["small.en", "small", "medium", "large-v3"],
+                 note: "faster-whisper on this machine — nothing is uploaded" }
+    };
+    var ENGINE_ORDER = ["deepgram", "groq", "assemblyai", "openai", "local"];
 
+    function pathOf(item, folder) {
+        try { return String(item.fsName); } catch (e) {}
+        return folder + "/" + item.name;
+    }
+
+    function buildUI(thisObj) {
         var ui = (thisObj instanceof Panel) ? thisObj :
             new Window("palette", PANEL_TITLE, undefined, { resizeable: true });
         ui.orientation = "column";
@@ -431,21 +457,35 @@
         try { title.graphics.font = ScriptUI.newFont("dialog", "BOLD", 12); } catch (e) {}
         head.add("statictext", undefined, "Poppins SemiBold · white line · the spoken word in orange");
 
-        // ----------------------------------------------------------- captions
-        var sourcePanel = ui.add("panel", undefined, "Captions");
-        sourcePanel.orientation = "column";
-        sourcePanel.alignChildren = ["fill", "top"];
-        sourcePanel.margins = 8;
-        sourcePanel.spacing = 5;
+        // ------------------------------------------------------ tabs
+        var tabRow = ui.add("group");
+        tabRow.alignment = ["fill", "top"];
+        tabRow.spacing = 2;
+        var tabCaptions = tabRow.add("button", undefined, "Captions", { name: "tabCaptions" });
+        var tabTranscribe = tabRow.add("button", undefined, "Transcribe", { name: "tabTranscribe" });
+        var tabKeys = tabRow.add("button", undefined, "Keys", { name: "tabKeys" });
+        tabCaptions.alignment = ["fill", "center"];
+        tabTranscribe.alignment = ["fill", "center"];
+        tabKeys.alignment = ["fill", "center"];
 
-        var pathRow = sourcePanel.add("group");
+        // ---------------------------------------------------- 1 · captions
+        var capGroup = ui.add("group", undefined, { name: "capGroup" });
+        capGroup.orientation = "column";
+        capGroup.alignChildren = ["fill", "top"];
+        capGroup.spacing = 5;
+
+        var pathRow = capGroup.add("group");
         pathRow.alignment = ["fill", "top"];
-        pathRow.add("statictext", undefined, "Path");
+        pathRow.add("statictext", undefined, "Folder");
         var pathField = pathRow.add("edittext", undefined, "", { name: "pathField" });
         pathField.alignment = ["fill", "center"];
+        pathField.preferredSize = [210, 22];
+        var projectBtn = pathRow.add("button", undefined, "Project", { name: "projectBtn" });
         var goBtn = pathRow.add("button", undefined, "Go", { name: "goPath" });
 
-        var fileButtons = sourcePanel.add("group");
+        capGroup.add("statictext", undefined, "CAPTION FILES — CLICK ONE TO LOAD IT", { name: "capHead" });
+
+        var fileButtons = capGroup.add("group");
         fileButtons.orientation = "row";
         fileButtons.alignment = ["fill", "top"];
         var fileColA = fileButtons.add("group");
@@ -455,22 +495,101 @@
         fileColB.orientation = "column";
         fileColB.alignment = ["fill", "top"];
 
-        var browseNote = sourcePanel.add("statictext", undefined, "", { name: "browseNote", multiline: true });
-        browseNote.preferredSize = [380, 28];
+        var browseNote = capGroup.add("statictext", undefined, "", { name: "browseNote", multiline: true });
+        browseNote.preferredSize = [380, 16];
 
-        var sourceInfo = sourcePanel.add("statictext", undefined, "No captions loaded yet.", { name: "sourceInfo", multiline: true });
-        sourceInfo.preferredSize = [380, 30];
+        var sourceInfo = capGroup.add("statictext", undefined, "No captions loaded yet.", { name: "sourceInfo", multiline: true });
+        sourceInfo.preferredSize = [380, 16];
 
-        var previewLabel = sourcePanel.add("statictext", undefined, "Preview:", { name: "previewLabel" });
-        var preview = sourcePanel.add("listbox", undefined, [], { name: "preview" });
-        preview.preferredSize = [380, 96];
+        var preview = capGroup.add("listbox", undefined, [], { name: "preview" });
+        preview.preferredSize = [380, 78];
 
-        var pasteLabel = sourcePanel.add("statictext", undefined,
-            "Or paste a file path, an SRT or the word-timing JSON:", { name: "pasteLabel" });
-        var pasteBox = sourcePanel.add("edittext", undefined, "", { name: "paste", multiline: true, wantReturn: true });
-        pasteBox.preferredSize = [380, 44];
-        var usePasteBtn = sourcePanel.add("button", undefined, "Use Pasted Text", { name: "usePaste" });
-        usePasteBtn.alignment = ["fill", "center"];
+        var pasteGroup = capGroup.add("group");
+        pasteGroup.orientation = "column";
+        pasteGroup.alignment = ["fill", "top"];
+        pasteGroup.spacing = 3;
+        pasteGroup.add("statictext", undefined, "Or paste");
+        var pasteBox = pasteGroup.add("edittext", undefined, "", { name: "paste", multiline: true, wantReturn: true, scrolling: true });
+        pasteBox.alignment = ["fill", "center"];
+        pasteBox.preferredSize = [380, 38];
+        pasteBox.maximumSize = [380, 38];
+        var usePasteBtn = pasteGroup.add("button", undefined, "Load", { name: "usePaste" });
+        usePasteBtn.alignment = ["fill", "top"];
+
+        // -------------------------------------------------- 2 · transcribe
+        var mediaGroup = ui.add("group", undefined, { name: "mediaGroup" });
+        mediaGroup.orientation = "column";
+        mediaGroup.alignChildren = ["fill", "top"];
+        mediaGroup.spacing = 5;
+
+        var engineRow = mediaGroup.add("group");
+        engineRow.alignment = ["fill", "top"];
+        engineRow.add("statictext", undefined, "Engine");
+        var engineList = engineRow.add("dropdownlist", undefined, [], { name: "engine" });
+        engineList.alignment = ["fill", "center"];
+        engineList.preferredSize = [140, 24];
+        engineRow.add("statictext", undefined, "Model");
+        var modelList = engineRow.add("dropdownlist", undefined, [], { name: "model" });
+        modelList.alignment = ["fill", "center"];
+        modelList.preferredSize = [130, 24];
+        engineRow.add("statictext", undefined, "Lang");
+        var languageField = engineRow.add("edittext", undefined, loadSetting("language", ""), { name: "language" });
+        languageField.characters = 5;
+        languageField.alignment = ["fill", "center"];
+
+        var engineNote = mediaGroup.add("statictext", undefined, "", { name: "engineNote", multiline: true });
+        engineNote.preferredSize = [380, 16];
+
+        mediaGroup.add("statictext", undefined, "MEDIA FILES — CLICK ONE TO TRANSCRIBE IT", { name: "mediaHead" });
+
+        var mediaButtons = mediaGroup.add("group");
+        mediaButtons.orientation = "row";
+        mediaButtons.alignment = ["fill", "top"];
+        var mediaColA = mediaButtons.add("group");
+        mediaColA.orientation = "column";
+        mediaColA.alignment = ["fill", "top"];
+        var mediaColB = mediaButtons.add("group");
+        mediaColB.orientation = "column";
+        mediaColB.alignment = ["fill", "top"];
+
+        var mediaNote = mediaGroup.add("statictext", undefined, "", { name: "mediaNote", multiline: true });
+        mediaNote.preferredSize = [380, 16];
+
+        // -------------------------------------------------------- 3 · keys
+        var keyGroup = ui.add("group", undefined, { name: "keyGroup" });
+        keyGroup.orientation = "column";
+        keyGroup.alignChildren = ["fill", "top"];
+        keyGroup.spacing = 5;
+
+        keyGroup.add("statictext", undefined, "API KEYS FOR THE ONLINE ENGINES", { name: "keyHead" });
+
+        var keyRow = keyGroup.add("group");
+        keyRow.alignment = ["fill", "top"];
+        keyRow.add("statictext", undefined, "Service");
+        var keyProvider = keyRow.add("dropdownlist", undefined, [], { name: "keyProvider" });
+        keyProvider.alignment = ["fill", "center"];
+        keyProvider.preferredSize = [140, 24];
+        keyRow.add("statictext", undefined, "Key");
+        var keyField = keyRow.add("edittext", undefined, "", { name: "keyField" });
+        keyField.alignment = ["fill", "center"];
+        keyField.preferredSize = [170, 24];
+
+        var keyButtons = keyGroup.add("group");
+        keyButtons.alignment = ["fill", "top"];
+        var saveKeyBtn = keyButtons.add("button", undefined, "Save key", { name: "saveKey" });
+        var clearKeyBtn = keyButtons.add("button", undefined, "Clear key", { name: "clearKey" });
+        saveKeyBtn.alignment = ["fill", "center"];
+        clearKeyBtn.alignment = ["fill", "center"];
+
+        var keyNote = keyGroup.add("statictext", undefined, "", { name: "keyNote", multiline: true });
+        keyNote.preferredSize = [380, 30];
+
+        var serviceRow = keyGroup.add("group");
+        serviceRow.alignment = ["fill", "top"];
+        var startBtn = serviceRow.add("button", undefined, "Start the transcriber", { name: "startTranscriber" });
+        startBtn.alignment = ["fill", "center"];
+        var serviceNote = keyGroup.add("statictext", undefined, "", { name: "serviceNote", multiline: true });
+        serviceNote.preferredSize = [380, 30];
 
         // -------------------------------------------------------------- look
         var bottomRow = ui.add("group");
@@ -542,15 +661,42 @@
 
         // ------------------------------------------------------------ status
         var status = ui.add("statictext", undefined, "Load a caption file to begin.", { name: "status", multiline: true });
-        status.preferredSize = [380, 40];
+        status.preferredSize = [380, 34];
 
         // ---------------------------------------------------------- actions
-        var state = { lines: null, kind: "", source: "", words: 0, entries: [], loading: false, loadedPath: "", loadedAt: 0 };
-        // the browser starts in the project's folder and follows the project if it changes
-        var browser = {
-            folder: projectFolder() || loadSetting("lastFolder", ""),
-            project: projectFolder()
-        };
+        var state = { lines: null, kind: "", source: "", sourceName: "", words: 0, entries: [], media: [],
+                      loading: false, loadedPath: "", loadedAt: 0, modelEngine: "" };
+        var providerInfo = {};          // provider → {title, models, ready, note}
+        var serviceUp = false;
+        var browser = { folder: projectFolder() };
+        var MODES = ["Captions", "Transcribe", "Keys"];
+        var activeTab = 0;
+
+        function showMode(name) {
+            var index = 0;
+            for (var i = 0; i < MODES.length; i++) if (MODES[i] === name) index = i;
+            activeTab = index;
+            try {
+                tabCaptions.enabled = true;
+                tabTranscribe.enabled = true;
+                tabKeys.enabled = true;
+                if (index === 0) tabCaptions.enabled = false;
+                if (index === 1) tabTranscribe.enabled = false;
+                if (index === 2) tabKeys.enabled = false;
+
+                capGroup.visible = (index === 0);
+                mediaGroup.visible = (index === 1);
+                keyGroup.visible = (index === 2);
+            } catch (e) {}
+            try { ui.layout.layout(true); } catch (e2) {}
+            saveSetting("mode", MODES[index]);
+        }
+
+        try {
+            tabCaptions.onClick = function () { showMode("Captions"); };
+            tabTranscribe.onClick = function () { showMode("Transcribe"); };
+            tabKeys.onClick = function () { showMode("Keys"); };
+        } catch (e) {}
 
         function setStatus(msg) {
             status.text = shorten(msg, STATUS_CHARS);
@@ -571,7 +717,7 @@
             var n = Math.min(lines.length, MAX_PREVIEW);
             for (var i = 0; i < n; i++) {
                 var l = lines[i];
-                preview.add("item", (i + 1) + ".  " + timeText(l.start) + "  " + shorten(l.text, 46));
+                preview.add("item", (i + 1) + ".  " + timeText(l.start) + "  " + shorten(l.text, 44));
             }
             if (lines.length > n) {
                 preview.add("item", "… and " + (lines.length - n) + " more line(s)");
@@ -601,7 +747,7 @@
 
         function requireLines() {
             if (!state.lines || !state.lines.length) {
-                setStatus("Load a caption file first (or paste one and press Use Pasted Text).");
+                setStatus("Load a caption file first (or paste one and press Load).");
                 return null;
             }
             return state.lines;
@@ -620,13 +766,9 @@
             var baseline = num(baselineField.text, BASELINE_PCT);
             if (!(baseline >= 0 && baseline <= 100)) throw new Error("Baseline must be between 0 and 100.");
             return {
-                font: font,
-                style: style,
-                sizePx: sizePx,
-                textColorRgb: textRgb,
-                highlightRgb: highlightRgb,
-                baselinePct: baseline,
-                replace: replaceBox.value
+                font: font, style: style, sizePx: sizePx,
+                textColorRgb: textRgb, highlightRgb: highlightRgb,
+                baselinePct: baseline, replace: replaceBox.value
             };
         }
 
@@ -638,6 +780,7 @@
             saveSetting("textColor", trim(textField.text));
             saveSetting("highlight", trim(highlightField.text));
             saveSetting("replace", replaceBox.value ? "1" : "0");
+            saveSetting("language", trim(languageField.text));
         }
 
         function updateLookNote() {
@@ -659,32 +802,29 @@
             lookNote.text = size + " px · baseline " + baseline + " px (" + w + "×" + h + ")";
         }
 
-        function loadFromText(text, sourceName) {
+        function loadFromText(text, sourceName, fileName) {
             var t = trim(text);
             if (!t) throw new Error("There is nothing to read.");
             if (t.charAt(0) === "[" || t.charAt(0) === "{") {
-                return { lines: normalizeLines(JSON.parse(t)), kind: "json", source: sourceName };
+                var data;
+                try {
+                    data = JSON.parse(t);
+                } catch (e) {
+                    throw new Error("the JSON could not be read — it may still be being written. Try again in a moment.");
+                }
+                return { lines: normalizeLines(data), kind: "json", source: sourceName, fileName: fileName };
             }
-            return { lines: parseSRT(t), kind: "srt", source: sourceName };
+            return { lines: parseSRT(t), kind: "srt", source: sourceName, fileName: fileName };
         }
 
         function loadFile(file) {
             var text = readFileText(file);
-            var res = loadFromText(text, file.name + " (" + fileSizeText(text.length) + ")");
-            adopt(res.lines, res.kind, res.source, file.name);
-            try { state.loadedPath = String(file.fsName); } catch (e) {}
-            try { state.loadedAt = new Date().getTime(); } catch (e2) {}
+            var res = loadFromText(text, file.name + " (" + fileSizeText(text.length) + ")", file.name);
+            adopt(res.lines, res.kind, res.source, res.fileName);
             return res;
         }
 
-        // ------------------------------------------------------ file browser
-        // This EffectCraft build has no native file dialog (File.openDialog is a
-        // stub that returns null), so the panel browses folders itself.
-        function pathOf(item, folder) {
-            try { return String(item.fsName); } catch (e) {}
-            return folder + "/" + item.name;
-        }
-
+        // ------------------------------------------------------- file lists
         function listFolder(folder) {
             var entries = [];
             var list = new Folder(folder).getFiles();
@@ -694,7 +834,7 @@
                 if (it instanceof File && /\.(json|srt|txt|vtt)$/i.test(it.name)) {
                     var size = 0;
                     try { size = it.length; } catch (e) {}
-                    entries.push({ dir: false, label: it.name, name: it.name, path: pathOf(it, folder), size: size });
+                    entries.push({ label: it.name, name: it.name, path: pathOf(it, folder), size: size });
                 }
             }
             entries.sort(function (a, b) {
@@ -703,184 +843,566 @@
             return entries;
         }
 
+        function listMedia(folder) {
+            var entries = [];
+            try {
+                var list = new Folder(folder).getFiles();
+                for (var i = 0; i < list.length; i++) {
+                    var it = list[i];
+                    if (it instanceof File && MEDIA_EXTS.test(it.name)) {
+                        var size = 0;
+                        try { size = it.length; } catch (e) {}
+                        entries.push({ name: it.name, path: pathOf(it, folder), size: size });
+                    }
+                }
+            } catch (e) {}
+            entries.sort(function (a, b) {
+                return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0);
+            });
+            return entries;
+        }
+
         function refreshBrowser() {
+            // always use the project folder
+            var proj = projectFolder();
+            if (proj) browser.folder = proj;
             var folder = browser.folder;
             state.entries = [];
             pathField.text = folder || "";
+            checkPendingResult();
+            try { fileColA.removeAll(); fileColB.removeAll(); } catch (e) {}
             if (!folder) {
-                browseNote.text = "Save the project first, or type a path below.";
+                browseNote.text = "Save the project first so the panel can find its folder.";
                 return;
             }
             var entries = null;
             try {
                 entries = listFolder(folder);
             } catch (e) {
-                // the last folder may have become unreadable — fall back to the project's
-                var home = projectFolder();
-                if (home && home !== folder) {
-                    browser.folder = home;
-                    try { entries = listFolder(home); } catch (e2) { entries = null; }
-                    if (entries) {
-                        folder = home;
-                        pathField.text = home;
-                        saveSetting("lastFolder", home);
-                        browseNote.text = "That folder cannot be read — back in the project's folder.";
-                    }
-                }
-                if (!entries) browseNote.text = "Cannot read that folder: " + friendlyError(e);
+                browseNote.text = "That folder cannot be read: " + friendlyError(e);
             }
             state.entries = entries || [];
-            try { fileColA.removeAll(); fileColB.removeAll(); } catch (e) {}
             var i;
             var shown = 0;
             for (i = 0; i < state.entries.length && shown < MAX_FILE_BUTTONS; i++) {
                 var en = state.entries[i];
-                var label = en.name;
+                var label = shorten(en.name, 26) + "  (" + fileSizeText(en.size) + ")";
                 if (state.sourceName && en.name === state.sourceName) label = "* " + label;
                 var col = (shown % 2 === 0) ? fileColA : fileColB;
-                var button = col.add("button", undefined, shorten(label, 36), { name: "file" + i });
+                var button = col.add("button", undefined, label, { name: "file" + i });
                 button.alignment = ["fill", "top"];
-                try { button.helpTip = en.name + " — " + fileSizeText(en.size); } catch (e) {}
+                try { button.helpTip = en.path; } catch (e) {}
                 button.onClick = makeFileHandler(i);
                 shown++;
             }
-            if (entries === null) {
-                // the message from the error is already in browseNote
-            } else if (!entries.length) {
-                browseNote.text = "No caption files (.json / .srt) in " + folder + ".";
-            } else {
-                browseNote.text = "Showing " + folder + " — click a file to load it." +
-                    (entries.length > shown
-                        ? " (first " + shown + " of " + entries.length + " — type a path for the rest)"
-                        : "") +
-                    (hasNativeDialog ? "" : " (no native file dialog in this build)");
+            if (entries && entries.length) {
+                browseNote.text = "Showing " + folder + (entries.length > shown
+                    ? " — first " + shown + " of " + entries.length + ", type a path for the rest." : ".");
             }
+            refreshMedia(folder);
+        }
+
+        function refreshMedia(folder) {
+            try { mediaColA.removeAll(); mediaColB.removeAll(); } catch (e) {}
+            state.media = [];
+            if (!folder) {
+                mediaNote.text = "Save the project first to see its media files.";
+                return;
+            }
+            var entries = listMedia(folder);
+            state.media = entries;
+            var shown = 0;
+            for (var i = 0; i < entries.length && shown < MAX_FILE_BUTTONS; i++) {
+                var en = entries[i];
+                var label = shorten(en.name, 26) + "  (" + fileSizeText(en.size) + ")";
+                var col = (shown % 2 === 0) ? mediaColA : mediaColB;
+                var button = col.add("button", undefined, label, { name: "media" + i });
+                button.alignment = ["fill", "top"];
+                try { button.helpTip = en.path; } catch (e) {}
+                button.onClick = makeTranscribeHandler(i);
+                shown++;
+            }
+            mediaNote.text = entries.length
+                ? "The word-timing JSON is written next to the file and loaded here."
+                : "No audio or video files in this folder.";
+        }
+
+        // pick up a finished transcription even if the panel could not poll
+        function checkPendingResult() {
+            if (!state.pendingOut) return false;
+            try {
+                var file = new File(state.pendingOut);
+                if (!file.exists) return false;
+                if (state.loadedPath === String(file.fsName)) return false;
+                loadFile(file);
+                state.loadedPath = String(file.fsName);
+                state.pendingOut = "";
+                setStatus("The transcription finished — the word-timing JSON was loaded.");
+                return true;
+            } catch (e) {
+                return false;
+            }
+        }
+
+        // ------------------------------------------------------------ engines
+        function engineLabel(name) {
+            var known = providerInfo[name];          // only the service knows the key state
+            var info = known || ENGINES[name];
+            var label = info.title || name;
+            if (known && known.env) {
+                label += (known.ready === true) ? "  (key set)" : "  (no key)";
+            }
+            return label;
+        }
+
+        function engineModels(name) {
+            var info = providerInfo[name] || ENGINES[name];
+            return (info && info.models && info.models.length) ? info.models : [];
+        }
+
+        function fillModels(name) {
+            var models = engineModels(name);
+            try { modelList.removeAll(); } catch (e) {
+                try { while (modelList.items.length) modelList.remove(0); } catch (e2) {}
+            }
+            for (var i = 0; i < models.length; i++) modelList.add("item", models[i]);
+            try { modelList.selection = 0; } catch (e3) {}
+            var known = providerInfo[name];
+            var info = known || ENGINES[name];
+            var note = info ? info.note : "";
+            if (known && known.env && known.ready !== true) note += " — no key yet (Keys tab).";
+            engineNote.text = note;
+        }
+
+        function setEngine(name) {
+            if (!name) return;
+            fillModels(name);
+            saveSetting("provider", name);
+        }
+
+        function currentEngine() {
+            var sel = null;
+            try { sel = engineList.selection; } catch (e) {}
+            var label = sel && sel.text ? String(sel.text) : "";
+            for (var i = 0; i < ENGINE_ORDER.length; i++) {
+                var name = ENGINE_ORDER[i];
+                var info = providerInfo[name] || ENGINES[name];
+                if (label.indexOf(info.title) === 0) return name;
+            }
+            return loadSetting("provider", "deepgram");
+        }
+
+        function currentModel() {
+            var sel = null;
+            try { sel = modelList.selection; } catch (e) {}
+            if (sel && sel.text) return String(sel.text);
+            var models = engineModels(currentEngine());
+            return models.length ? models[0] : "";
+        }
+
+        // keep the model list in step with the engine, whichever event the app sends
+        function syncModels() {
+            var name = currentEngine();
+            if (name === state.modelEngine) return;
+            state.modelEngine = name;
+            fillModels(name);
+        }
+
+        function onEngineChanged() {
+            syncModels();
+            setEngine(currentEngine());
+        }
+
+        try {
+            engineList.onChange = onEngineChanged;
+            engineList.onClick = onEngineChanged;
+        } catch (e) {}
+
+        // ---------------------------------------------------------- the service
+        function sendToTranscriber(message, onReply) {
+            var reply = "";
+            try {
+                var s = new Socket();
+                s.timeout = 5000;
+                if (!s.open(TRANSCRIBER_HOST + ":" + TRANSCRIBER_PORT, "UTF-8")) {
+                    s.close();
+                    onReply(null, "no transcriber");
+                    return;
+                }
+                s.write(message + "\n");
+                for (var i = 0; i < 400; i++) {
+                    s.poll();
+                    reply += s.read();
+                    if (reply.indexOf("\n") >= 0) break;
+                }
+                s.close();
+                onReply(reply, null);
+            } catch (e) {
+                onReply(null, String(e && e.message ? e.message : e));
+            }
+        }
+
+        // a tiny HTTP client over the socket (the panel has no fetch)
+        function httpPost(host, port, path) {
+            var reply = "";
+            try {
+                var s = new Socket();
+                s.timeout = 8000;
+                if (!s.open(host + ":" + port, "UTF-8")) { s.close(); return null; }
+                s.write("POST " + path + " HTTP/1.1\r\nHost: " + host + ":" + port +
+                    "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                for (var i = 0; i < 400; i++) {
+                    s.poll();
+                    reply += s.read();
+                    if (reply.length > 2000) break;
+                }
+                s.close();
+                return reply;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        var NETWORK_HINT = "Turn on Settings ▸ Scripting & Expressions ▸ " +
+            "Allow Scripts to Write Files and Access Network, so the panel can reach the transcriber.";
+
+        function refreshEngines() {
+            sendToTranscriber("PROVIDERS", function (reply, err) {
+                if (err || !reply || reply.indexOf("PROVIDERS") !== 0) {
+                    serviceUp = false;
+                    providerInfo = {};
+                    var blocked = /network/.test(String(err || ""));
+                    engineNote.text = blocked
+                        ? "The panel cannot reach the transcriber. " + NETWORK_HINT
+                        : "The transcriber is not running — press “Start the transcriber” in the Keys tab.";
+                    serviceNote.text = blocked
+                        ? NETWORK_HINT
+                        : "The transcriber service is not running on " +
+                          TRANSCRIBER_HOST + ":" + TRANSCRIBER_PORT + ".";
+                    fillEngineList();
+                    fillKeyList();
+                    return;
+                }
+                serviceUp = true;
+                var info = {};
+                try { info = JSON.parse(reply.slice(10)); } catch (e) {}
+                providerInfo = info;
+                serviceNote.text = "The transcriber is running on " + TRANSCRIBER_HOST + ":" + TRANSCRIBER_PORT + ".";
+                fillEngineList();
+                fillKeyList();
+            });
+        }
+
+        function fillEngineList() {
+            var wanted = loadSetting("provider", "deepgram");
+            try { engineList.removeAll(); } catch (e) {
+                try { while (engineList.items.length) engineList.remove(0); } catch (e2) {}
+            }
+            var index = 0;
+            for (var i = 0; i < ENGINE_ORDER.length; i++) {
+                var name = ENGINE_ORDER[i];
+                engineList.add("item", engineLabel(name));
+                if (name === wanted) index = i;
+            }
+            try { engineList.selection = index; } catch (e3) {}
+            state.modelEngine = "";
+            fillModels(ENGINE_ORDER[index]);
+        }
+
+        // ------------------------------------------------------------- keys
+        function fillKeyList() {
+            var wanted = loadSetting("keyProvider", "deepgram");
+            try { keyProvider.removeAll(); } catch (e) {
+                try { while (keyProvider.items.length) keyProvider.remove(0); } catch (e2) {}
+            }
+            var index = 0;
+            for (var i = 0; i < ENGINE_ORDER.length; i++) {
+                var name = ENGINE_ORDER[i];
+                keyProvider.add("item", engineLabel(name));
+                if (name === wanted) index = i;
+            }
+            try { keyProvider.selection = index; } catch (e3) {}
+            updateKeyNote();
+        }
+
+        function currentKeyProvider() {
+            var sel = null;
+            try { sel = keyProvider.selection; } catch (e) {}
+            var label = sel && sel.text ? String(sel.text) : "";
+            for (var i = 0; i < ENGINE_ORDER.length; i++) {
+                var name = ENGINE_ORDER[i];
+                var info = providerInfo[name] || ENGINES[name];
+                if (label.indexOf(info.title) === 0) return name;
+            }
+            return loadSetting("keyProvider", "deepgram");
+        }
+
+        function updateKeyNote() {
+            var name = currentKeyProvider();
+            var known = providerInfo[name];
+            var info = known || ENGINES[name];
+            if (!info.env) {
+                keyNote.text = info.title + " needs no key — it runs on this machine.";
+                return;
+            }
+            if (!known) {
+                keyNote.text = info.title + " — the transcriber service holds the key. " +
+                    "Start it to see whether a key is saved.";
+                return;
+            }
+            keyNote.text = info.title + " — " + (info.ready === true
+                ? "a key is saved. Paste a new one to replace it."
+                : "no key yet. Paste one and press Save key.");
+        }
+
+        try {
+            keyProvider.onChange = function () { saveSetting("keyProvider", currentKeyProvider()); updateKeyNote(); };
+            keyProvider.onClick = function () { saveSetting("keyProvider", currentKeyProvider()); updateKeyNote(); };
+        } catch (e) {}
+
+        saveKeyBtn.onClick = function () {
+            var name = currentKeyProvider();
+            var key = trim(keyField.text);
+            if (!key) {
+                setStatus("Paste the API key first.");
+                return;
+            }
+            if (!serviceUp) {
+                setStatus("Start the transcriber first — it is the one that stores the key.");
+                return;
+            }
+            sendToTranscriber("SETKEY " + name + " " + key, function (reply, err) {
+                if (err) { transcriberMissing(err); return; }
+                if ((reply || "").indexOf("OK") !== 0) {
+                    setStatus("The key was not saved: " + shorten(reply, 160));
+                    return;
+                }
+                keyField.text = "";
+                setStatus("Saved the " + name + " key.");
+                refreshEngines();
+            });
+        };
+
+        clearKeyBtn.onClick = function () {
+            var name = currentKeyProvider();
+            if (!serviceUp) {
+                setStatus("Start the transcriber first — it is the one that stores the key.");
+                return;
+            }
+            sendToTranscriber("DELKEY " + name, function (reply, err) {
+                if (err) { transcriberMissing(err); return; }
+                if ((reply || "").indexOf("OK") !== 0) {
+                    setStatus("The key was not cleared: " + shorten(reply, 160));
+                    return;
+                }
+                keyField.text = "";
+                setStatus("Cleared the " + name + " key.");
+                refreshEngines();
+            });
+        };
+
+        function transcriberMissing(reason) {
+            setStatus(/network/.test(String(reason))
+                ? NETWORK_HINT
+                : "The transcriber is not reachable (" + reason + "). " +
+                  "Press “Start the transcriber” in the Keys tab.");
+        }
+
+        // The panel cannot start programs itself, but the local web app can:
+        // it starts the transcriber service on request.
+        startBtn.onClick = function () {
+            setStatus("Looking for the transcriber…");
+            sendToTranscriber("PING", function (reply, err) {
+                if (!err && (reply || "").indexOf("OK") === 0) {
+                    setStatus("The transcriber is already running.");
+                    serviceUp = true;
+                    refreshEngines();
+                    return;
+                }
+                if (err && /network/.test(String(err))) {
+                    setStatus(NETWORK_HINT);
+                    return;
+                }
+                serviceUp = false;
+                var http = httpPost(WEBAPP_HOST, WEBAPP_PORT, "/api/start-transcriber");
+                if (http && http.indexOf("200 OK") >= 0) {
+                    setStatus("The transcriber is starting…");
+                    refreshEngines();
+                    return;
+                }
+                setStatus("The web app at " + WEBAPP_HOST + ":" + WEBAPP_PORT +
+                    " could not start it. Run: bash ~/.local/share/effectcraft-autocaption/" +
+                    "webapp/run-transcriber.sh");
+            });
+        };
+
+        // ---------------------------------------------------------- transcribe
+        function transcribeMedia(index) {
+            var entry = state.media[index];
+            if (!entry) return;
+            var dot = entry.path.lastIndexOf(".");
+            var base = dot > 0 ? entry.path.slice(0, dot) : entry.path;
+            var out = base + " - word timings.json";
+            syncModels();
+            var engine = currentEngine();
+            var info = providerInfo[engine] || ENGINES[engine];
+            var request = {
+                media: entry.path,
+                out: out,
+                provider: engine,
+                model: currentModel(),
+                language: trim(languageField.text),
+                max_words: 7, max_chars: 38, pause: 1.0, lead: 0.05, hold: 0.7
+            };
+            state.pendingOut = out;
+            setStatus("Transcribing " + entry.name + " with " + info.title + "…");
+            sendToTranscriber("TRANSCRIBE\t" + JSON.stringify(request), function (reply, err) {
+                if (err) { transcriberMissing(err); return; }
+                var head = (reply || "").split(" ")[0];
+                if (head === "ERR") {
+                    setStatus("The transcriber refused the job: " + (reply || "").slice(4));
+                    return;
+                }
+                if (head !== "QUEUED") {
+                    setStatus("Unexpected answer from the transcriber: " + shorten(reply, 120));
+                    return;
+                }
+                var job = (reply || "").split(" ")[1];
+                pollTranscription(job, out, entry.name);
+            });
+        }
+
+        function makeTranscribeHandler(index) {
+            return function () { transcribeMedia(index); };
+        }
+
+        function makeFileHandler(index) {
+            return function () { loadEntry(index); };
         }
 
         function loadEntry(index) {
             var entry = state.entries[index];
             if (!entry) {
-                setStatus("That file is gone — press Go on the path to list the folder again.");
+                setStatus("That file is gone — type a path and press Go.");
                 return;
             }
-            followProject();
-            state.loading = true;
             try {
                 loadFile(new File(entry.path));
+                state.loadedPath = entry.path;
                 saveSetting("lastFile", entry.name);
                 refreshBrowser();
             } catch (e) {
                 setStatus("Could not read that file: " + friendlyError(e));
             }
-            state.loading = false;
         }
 
-        // each button needs its own copy of the index
-        function makeFileHandler(index) {
-            return function () { loadEntry(index); };
-        }
+        // Store poll state so app.scheduleTask (string-only) can reach it
+        var _pollJob = "", _pollOut = "", _pollName = "";
 
-        // If the user opened another project, show that project's files.
-        function followProject() {
-            var home = projectFolder();
-            if (!home || home === browser.project) return;
-            browser.project = home;
-            browser.folder = home;
-            refreshBrowser();
-            setStatus("Now showing the files of " + home + ".");
-        }
-
-        function goToTypedPath() {
-            var p = trim(pathField.text);
-            if (!p) {
-                setStatus("Type a folder or a file path first.");
-                return;
+        function pollTranscription(job, out, name) {
+            _pollJob = job; _pollOut = out; _pollName = name;
+            // Poll synchronously — sendToTranscriber is sync (Socket is blocking)
+            for (var attempt = 0; attempt < 120; attempt++) {
+                $.sleep(1500);
+                var done = false;
+                sendToTranscriber("STATUS " + job, function (reply, err) {
+                    if (err) { transcriberMissing(err); done = true; return; }
+                    var line = (reply || "").replace(/\r?\n$/, "");
+                    var head = line.split(" ")[0];
+                    if (head === "RUNNING") {
+                        setStatus("Transcribing " + name + "…  " + shorten(line.slice(8), 120));
+                        return;
+                    }
+                    if (head === "DONE") {
+                        try {
+                            loadFile(new File(out));
+                            state.loadedPath = out;
+                            saveSetting("lastFile", out);
+                            refreshBrowser();
+                            showMode("Captions");
+                            setStatus("Transcribed " + name + " — the word-timing JSON was loaded.");
+                        } catch (e) {
+                            setStatus("Transcribed, but the JSON could not be read: " + friendlyError(e));
+                        }
+                        done = true;
+                        return;
+                    }
+                    if (head === "ERR" || head === "FAIL") {
+                        setStatus("The transcription failed: " + shorten(line.slice(4), 200));
+                        done = true;
+                        return;
+                    }
+                });
+                if (done) return;
             }
-            var file = new File(p);
-            var loaded = false;
-            try {
-                if (file.exists) {
-                    loadFile(file);
-                    loaded = true;
-                }
-            } catch (e) {
-                loaded = false;
-            }
-            if (!loaded) {
-                var entries = null;
-                try { entries = listFolder(p); } catch (e2) { entries = null; }
-                if (entries) {
-                    browser.folder = p;
-                    refreshBrowser();
-                    setStatus("Now showing the files of " + p + ".");
-                    loaded = true;
-                }
-            }
-            if (!loaded) {
-                setStatus("Cannot use that path: " + p +
-                    ". A script may only read files inside the project folder — " +
-                    "put the file next to the project, or turn on Settings ▸ Scripting & Expressions ▸ " +
-                    "Allow Scripts to Write Files and Access Network.");
-            }
+            setStatus("Timed out after 3 minutes — check the transcriber log.");
         }
 
         // ---------------------------------------------------------- buttons
-        goBtn.onClick = function () {
-            followProject();
-            goToTypedPath();
+        projectBtn.onClick = function () {
+            var proj = projectFolder();
+            if (!proj) {
+                setStatus("Save the project first, then the project folder will be available.");
+                return;
+            }
+            pathField.text = proj;
+            browser.folder = proj;
+            refreshBrowser();
+            setStatus("Showing project folder: " + proj);
         };
 
-        try {
-            pathField.onActivate = function () { goToTypedPath(); };
-        } catch (e) {}
+        goBtn.onClick = function () {
+            var p = trim(pathField.text);
+            if (!p) {
+                setStatus("Type a folder path first.");
+                return;
+            }
+            var entries = null;
+            try { entries = listFolder(p); } catch (e) { entries = null; }
+            if (entries) {
+                browser.folder = p;
+                refreshBrowser();
+                setStatus("Showing the files of " + p + ".");
+                return;
+            }
+            var file = new File(p);
+            try {
+                if (file.exists) {
+                    loadFile(file);
+                    state.loadedPath = p;
+                    return;
+                }
+            } catch (e) {}
+            setStatus("Cannot read " + p + " — a script may only read inside the project folder.");
+        };
 
         usePasteBtn.onClick = function () {
             var text = pasteBox.text;
             if (!trim(text)) {
-                setStatus("The paste box is empty — paste a file path, a folder path, an SRT or the JSON.");
+                setStatus("Paste a file path, an SRT or the JSON first.");
                 return;
             }
             if (text.length > MAX_PASTE) {
                 setStatus("That is too much text to paste (" + fileSizeText(text.length) + "). " +
-                    "Use the file list above instead.");
+                    "Use the file list instead.");
                 return;
             }
             var t = trim(text);
-            var looksLikePath = t.indexOf("\n") < 0 && (t.charAt(0) === "/" || t.charAt(0) === "~" || /\.(json|srt|txt|vtt)$/i.test(t));
+            var looksLikePath = t.indexOf("\n") < 0 &&
+                (t.charAt(0) === "/" || t.charAt(0) === "~" || /\.(json|srt|txt|vtt)$/i.test(t));
             try {
                 if (looksLikePath) {
                     var file = new File(t);
                     var loaded = false;
                     try {
-                        if (file.exists) {
-                            loadFile(file);
-                            loaded = true;
-                        }
-                    } catch (e2) {
-                        loaded = false;
-                    }
-                    if (!loaded) {
-                        // maybe it is a folder
-                        var entries = null;
-                        try { entries = listFolder(t); } catch (e3) { entries = null; }
-                        if (entries) {
-                            browser.folder = t;
-                            refreshBrowser();
-                            setStatus("Now showing the files of " + t + ".");
-                            loaded = true;
-                        }
-                    }
-                    if (!loaded) {
-                        throw new Error("Cannot use that path: " + t +
-                            ". A script may only read files inside the project folder — " +
-                            "put the file next to the project, or turn on Settings ▸ Scripting & Expressions ▸ " +
-                            "Allow Scripts to Write Files and Access Network.");
-                    }
+                        if (file.exists) { loadFile(file); loaded = true; }
+                    } catch (e) { loaded = false; }
+                    if (!loaded) throw new Error("Cannot read that path — put the file next to the project, or turn on " +
+                        "Settings ▸ Scripting & Expressions ▸ Allow Scripts to Write Files and Access Network.");
                 } else {
-                    var res = loadFromText(t, "pasted text (" + fileSizeText(text.length) + ")");
-                    adopt(res.lines, res.kind, res.source);
+                    var res = loadFromText(t, "pasted text (" + fileSizeText(text.length) + ")", "");
+                    adopt(res.lines, res.kind, res.source, res.fileName);
                 }
-                // the big text has served its purpose: keep the panel small
                 pasteBox.text = "";
             } catch (e) {
                 setStatus("Could not read that: " + friendlyError(e));
@@ -895,8 +1417,6 @@
                 setStatus("Open a composition first.");
                 return;
             }
-            followProject();
-            refreshBrowser();
             try {
                 var opts = readOptions();
                 saveOptions();
@@ -912,8 +1432,6 @@
         buildNewBtn.onClick = function () {
             var lines = requireLines();
             if (!lines) return;
-            followProject();
-            refreshBrowser();
             try {
                 var opts = readOptions();
                 saveOptions();
@@ -939,11 +1457,8 @@
         setBuildEnabled(false);
         refreshBrowser();
         updateLookNote();
-        if (!hasNativeDialog) {
-            setStatus(browser.folder
-                ? "Click a caption file in the list above to load it, or paste a file path below."
-                : "Save the project so its folder can be listed, or paste a file path below.");
-        }
+        refreshEngines();
+        showMode(loadSetting("mode", "Captions"));
         try {
             fontField.onChanging = updateLookNote;
             sizeField.onChanging = updateLookNote;

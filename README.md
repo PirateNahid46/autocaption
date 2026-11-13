@@ -8,13 +8,6 @@ It creates **one text layer per caption line**, each with a native text animator
 range selector in **Index / Words** mode, hold-keyed per word. The current word is orange, pauses go
 back to all white, and the last word stays orange until the line ends. Every build is one undo step.
 
-
-
-https://github.com/user-attachments/assets/ed297f49-1db5-403c-a0a7-5e72fb92fe9c
-
-
-
-
 ## Why a panel and not a `.wasm` effect
 
 EffectCraft has two extension points (see `plugins.md`): WebAssembly **effect plug-ins**, which process
@@ -22,6 +15,10 @@ pixels, and **scripts / ScriptUI panels**, which use the After Effects-style obj
 authored content — text layers, fonts, selector keyframes, timeline trimming — not a pixel effect, so the
 panel is the correct extension type. It is installed exactly like an extension and appears in the Window
 menu. A `.wasm` effect cannot create layers or keyframes and has no font rasteriser.
+
+
+
+[https://github.com/user-attachments/assets/ed297f49-1db5-403c-a0a7-5e72fb92fe9c](https://github.com/user-attachments/assets/ed297f49-1db5-403c-a0a7-5e72fb92fe9c)
 
 ## Install
 
@@ -55,31 +52,45 @@ so a “Load JSON…” button can never open a dialog). Instead the panel **bro
 you pick the file with **one click**.
 
 ```
-Captions
-  Path  [ /home/you/Videos/MyProject            ] [Go]
-  [ word timings.json ] [my-captions.json ]
-  Showing /home/you/Videos/MyProject — click a file to load it.
-  15 lines · 68 words · 35.1 s · word timings.json (8.0 KB)
-  Preview:
-   1.  0:00.0  Your time machine broke, and now
-   2.  0:02.4  you're stuck in the age of dinosaurs.
-   …
-  Or paste a file path, an SRT or the word-timing JSON:
-  [                                            ]
-  [Use Pasted Text]
-
-Look                     Build
- Font [Poppins]           [Build in Active Comp]
- Style [SemiBold]         [Build in New Comp]
- 26.7 px · baseline 1096 px (720×1280)
+┌ AUTOCAPTION ──────────────────────────────────────────┐
+│ Poppins SemiBold · white line · the spoken word in orange│
+│ Section [Captions ▾]                                  │
+│ Folder [ /home/you/Videos/MyProject        ] [Go]      │
+│ CAPTION FILES — CLICK ONE TO LOAD IT                   │
+│ [ Stuck in the Dinosaur Age - Captions.srt ]            │
+│ [ * my-captions.json                      ]            │
+│ Showing /home/you/Videos/MyProject — click a file.    │
+│ 15 lines · 68 words · 35.1 s · my-captions.json      │
+│ [ 1. 0:00.0  Your time machine broke, and now     ] │
+│ Or paste [                          ] [Load]          │
+│ Look  Font [Poppins] Style [SemiBold]                 │
+│       Size [auto] px  Baseline [85.6] %                │
+│       Text [#FFFFFF]  Highlight [#FC9868]             │
+│ Build [Build in Active Comp] [Build in New Comp]       │
+└──────────────────────────────────────────────────────┘
 ```
+
+One **Section** dropdown at the top switches between the three parts of the panel, so only one is on
+screen at a time and nothing can overlap (EffectCraft's own tabbed panel draws its tabs on top of each
+other, which is why the panel does not use it):
+
+| Section | What it does |
+|---|---|
+| **Captions** | load an existing word-timing JSON or SRT from the project's folder, or paste one |
+| **Transcribe** | pick the engine (Deepgram first) and a media file; the JSON is written next to the media and loaded here |
+| **Keys** | see which engines have a key, paste a new one, clear it, and **start the transcriber** |
+
+The panel is 575×630 in the Captions section and shrinks to ~470 tall in the others. The look and the
+build buttons stay below, and the status line is always visible.
 
 1. Open the composition that holds the video/audio (or any comp — **Build in New Comp** copies its size
    and frame rate).
 2. Load captions — the buttons show the **project's folder** as soon as the panel opens, and they
    follow the project if you open another one:
-   - **Click a file** to load it; the loaded one is marked with `*`, and the mouse-over tip shows its
-     size.
+   - **Click a caption file** to load it; the loaded one is marked with `*`, and the mouse-over tip shows
+     its size.
+   - **Click a media file** in the *Transcribe a media file* list to **transcribe it right here** (see
+     below) — no JSON to copy around.
    - Type a path into the **Path** field and press **Go** (or Enter) to load a file or to show another
      folder's caption files.
    - The format is detected from the content: a JSON array/object is read as word timings, anything
@@ -102,6 +113,81 @@ no footage or audio. Use **Build in Active Comp** to put the captions over the e
 The panel names layers `Caption 01`, `Caption 02`, … With **Replace existing caption layers** ticked
 (default), a rebuild removes those layers first. Don't name other layers `Caption NN` unless you want
 them replaced.
+
+## Transcribing from the panel
+
+Click a media file in the **Transcribe a media file** list and the panel transcribes it, writes
+`<name> - word timings.json` next to the media and loads it into the panel — no JSON to copy around.
+
+A script may not run programs (`system.callSystem` is a stub in EffectCraft), so the panel asks a small
+local service to do the work over a local socket. Start it once:
+
+```bash
+bash ~/.local/share/effectcraft-autocaption/webapp/run-transcriber.sh
+```
+
+Two things have to be true for this to work:
+
+- the transcriber service is running (`127.0.0.1:8787` by default);
+- **Settings ▸ Scripting & Expressions ▸ Allow Scripts to Write Files and Access Network** is on —
+  without it a script may not use the network, and the panel says so.
+
+If the service is not running the panel tells you exactly what to start.
+
+### Where the transcription happens
+
+The panel's **Engine** list picks the engine — the panel asks the transcriber service which ones
+hold a key and shows it in the list:
+
+| Engine | Model | Cost | Notes |
+|---|---|---|---|
+| `deepgram` | `whisper-large` (or `nova-3`) | **$200 free credit** ≈ 43 000 minutes, no card needed | the audio is uploaded; word times |
+| `local` | `small.en` / `small` / `medium` / `large-v3` | free | faster-whisper **on your own CPU** — nothing is uploaded |
+| `groq` | `whisper-large-v3-turbo` | free tier | the audio is uploaded |
+| `assemblyai` | `best` / `nano` | free tier | the audio is uploaded |
+| `openai` | `whisper-1` | paid | the audio is uploaded |
+
+Deepgram is the default. Choosing an engine repopulates the **Model** list with that engine's
+models, and the line under it says what happens (uploaded or not, free or paid, key set or not).
+
+For the online providers the audio is extracted to 16 kHz mono and, if it is too long for one
+request, sent in pieces whose word times are shifted back into place — so a long video still gets one
+continuous set of timings.
+
+### API keys
+
+Keys are **not** typed into the caption fields — they live on the service, in
+`~/.config/autocaption/keys.json` (mode 600), and the panel never sees them. You can set them from the
+panel's **Keys** tab (it asks the service to store them), or from a terminal:
+
+```bash
+bash ~/.local/share/effectcraft-autocaption/webapp/run-transcriber.sh --set-key deepgram <your key>
+bash ~/.local/share/effectcraft-autocaption/webapp/run-transcriber.sh --keys
+```
+
+You can also export `GROQ_API_KEY`, `DEEPGRAM_API_KEY`, `ASSEMBLYAI_API_KEY` or `OPENAI_API_KEY`
+instead. The panel's engine list shows which engines hold a key (*key set* / *no key*).
+
+### Starting the transcriber
+
+A panel may not run programs (`system.callSystem` is a stub), so the panel cannot start the service
+itself — but the **local web app** can, and the panel asks it to:
+
+```
+[Start the transcriber]  →  the panel pings the service
+                         →  not running? it posts to http://127.0.0.1:8765/api/start-transcriber
+                         →  the web app starts it and the panel picks it up
+```
+
+So run the web app once (`webapp/run.sh`) — it now **starts the transcriber itself** — and the panel can
+start it on demand too. The web app has the same button on its page.
+
+**One setting is required**: the panel talks to the service over a socket, so
+**Settings ▸ Scripting & Expressions ▸ Allow Scripts to Write Files and Access Network** must be on.
+Without it the panel says exactly that, and the Captions section still works (it only reads files).
+
+A Deepgram key comes from <https://console.deepgram.com> — the free tier starts with **$200 of
+credit** (no card needed, about 43 000 minutes of transcription).
 
 ## Word-timing JSON
 
@@ -131,18 +217,10 @@ Also accepted:
 - a line without `start` / `end` (taken from the first/last word)
 - a line without `words` (estimated from its text and line span)
 
-This is the format produced by the `word-timing-json` skill (`<name> - word timings.json`) and by the
+This is the format produced by the `word-timing-json` skill (`<name> - word timings.json`), by its
+browser app (**AutoCaption Web**: drop a media file on the page, get the JSON back), and by the
 `filmcraft-captions` skill's transcription step (`caption_data30.json`), so the same measured timings
 can be replayed exactly.
-
-
-## Audio or Video to JSON
-
-Use the webapp. https://autocaption46.web.app/
-
-You can also run it locally by downloading the webapp folder.
-
-
 
 ## Notes and traps
 

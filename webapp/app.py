@@ -16,9 +16,11 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import threading
+import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -28,6 +30,7 @@ SKILL = HERE.parent
 sys.path.insert(0, str(SKILL / "scripts"))
 
 import word_timing as wt  # noqa: E402
+import providers as P  # noqa: E402
 
 JOBS: dict[str, dict] = {}
 JOBS_LOCK = threading.Lock()
@@ -57,20 +60,32 @@ def run_job(jid: str, media: Path, opts: dict) -> None:
     try:
         media_info = wt.probe(media)
         duration = media_info["duration"] or 0.0
+        opts["_duration"] = duration
 
-        def progress(sec: float) -> None:
-            if duration:
-                pct = min(97, int((sec / duration) * 100))
-                set_job(jid, progress=pct, message=f"Transcribing… {pct}%")
+        def report(percent: float, message: str = "") -> None:
+            set_job(jid, progress=int(max(0, min(99, percent))), message=message)
 
-        set_job(jid, message="Decoding the audio…", progress=1)
-        result = wt.transcribe_file(
-            media, model=opts["model"], language=opts.get("language"),
-            max_words=opts["max_words"], max_chars=opts["max_chars"],
-            pause=opts["pause"], lead=opts["lead"], hold=opts["hold"],
-            fps=opts.get("fps"), progress=progress)
+        set_job(jid, state="running", message="Decoding the audio…", progress=1)
+        words, used = P.transcribe_with_provider(media, opts, report)
+        result = {
+            "json": wt.to_panel_json(
+                wt.time_lines(wt.group_lines(words, opts["max_words"], opts["max_chars"], opts["pause"]),
+                              opts["lead"], opts["hold"]),
+                opts.get("fps")),
+        }
+        result["srt"] = wt.srt_string(wt.time_lines(
+            wt.group_lines(words, opts["max_words"], opts["max_chars"], opts["pause"]),
+            opts["lead"], opts["hold"]))
+        result["lines"] = len(result["json"])
+        result["words"] = sum(len(l["words"]) for l in result["json"])
+        result["duration"] = round(duration, 2)
+        result["model"] = used
+        result["provider"] = opts.get("provider", "local")
+        print(f"job {jid[:8]} done: {result['lines']} lines, {result['words']} words "
+              f"via {used}", flush=True)
         set_job(jid, state="done", progress=100, message="Done", result=result)
     except Exception as e:  # the page shows the message
+        print(f"job {jid[:8]} failed: {e}", flush=True)
         set_job(jid, state="error", message=str(e))
     finally:
         try:
@@ -81,7 +96,7 @@ def run_job(jid: str, media: Path, opts: dict) -> None:
 
 def convert_text(text: str) -> dict:
     """Parse a pasted JSON or SRT into the panel format — no transcription."""
-    t = text.strip()
+    t = str(text or "").strip()
     if not t:
         raise ValueError("Nothing to read.")
     if t[0] in "[{":
@@ -92,8 +107,46 @@ def convert_text(text: str) -> dict:
         kind = "srt"
     data = wt.to_panel_json(lines)
     nwords = sum(len(l["words"]) for l in data)
-    return {"json": data, "srt": srt_text(lines), "lines": len(data),
+    return {"json": data, "srt": wt.srt_string(lines), "lines": len(data),
             "words": nwords, "kind": kind}
+
+
+# ------------------------------------------------------- the panel's service
+
+TRANSCRIBER_HOST = "127.0.0.1"
+TRANSCRIBER_PORT = 8787
+TRANSCRIBER = None
+
+
+def transcriber_running() -> bool:
+    import socket
+    try:
+        with socket.create_connection((TRANSCRIBER_HOST, TRANSCRIBER_PORT), 1):
+            return True
+    except OSError:
+        return False
+
+
+def start_transcriber() -> tuple[bool, str]:
+    """Start the transcriber service (the panel asks for this over HTTP)."""
+    global TRANSCRIBER
+    if transcriber_running():
+        return True, "The transcriber is already running."
+    script = HERE / "transcriber.py"
+    if not script.exists():
+        return False, "transcriber.py is missing next to the app."
+    try:
+        TRANSCRIBER = subprocess.Popen(
+            [sys.executable, str(script), "--port", str(TRANSCRIBER_PORT)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL, start_new_session=True)
+    except Exception as e:
+        return False, "could not start the transcriber: " + str(e)
+    for _ in range(30):
+        time.sleep(0.2)
+        if transcriber_running():
+            return True, "The transcriber is running."
+    return False, "the transcriber did not come up — run run-transcriber.sh by hand."
 
 
 # --------------------------------------------------------------------- server
@@ -151,7 +204,11 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, f.read_bytes(), ctype)
                     return
         if path == "/api/health":
-            self._json({"ok": True, "models": ["small.en", "small", "medium", "large-v3"]})
+            self._json({"ok": True, "providers": P.provider_info()})
+            return
+        if path == "/api/transcriber":
+            self._json({"running": transcriber_running(),
+                        "host": TRANSCRIBER_HOST, "port": TRANSCRIBER_PORT})
             return
         if path == "/api/job":
             from urllib.parse import parse_qs, urlparse
@@ -180,6 +237,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             opts = {
                 "model": (q.get("model") or ["small.en"])[0],
+                "provider": (q.get("provider") or ["local"])[0].lower(),
                 "language": (q.get("language") or [""])[0] or None,
                 "max_words": int((q.get("max_words") or ["7"])[0]),
                 "max_chars": int((q.get("max_chars") or ["38"])[0]),
@@ -193,6 +251,10 @@ class Handler(BaseHTTPRequestHandler):
                     name=name, options=opts)
             threading.Thread(target=run_job, args=(jid, media, opts), daemon=True).start()
             self._json({"job": jid})
+            return
+        if u.path == "/api/start-transcriber":
+            running, message = start_transcriber()
+            self._json({"ok": running, "message": message}, 200 if running else 200)
             return
         if u.path == "/api/convert":
             text = self._body().decode("utf-8", "replace")
@@ -214,6 +276,9 @@ def main() -> None:
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     url = f"http://{args.host}:{args.port}/"
     print(f"AutoCaption Web — {url}", flush=True)
+    if not os.environ.get("AUTOCAPTION_NO_AUTOSTART"):
+        ok, message = start_transcriber()
+        print("  " + message, flush=True)
     print("Press Ctrl+C to stop.", flush=True)
     if args.open:
         try:

@@ -70,12 +70,24 @@
   .hidden { display: none !important; }
   code { background: #14161f; padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
   .hint { color: var(--muted); font-size: 12.5px; margin: 8px 0 0; }
+  .engines { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+  @media (max-width: 520px) { .engines { grid-template-columns: repeat(2, 1fr); } }
+  .engine {
+    text-align: left; padding: 9px 11px; line-height: 1.25; border-radius: 9px;
+    background: #171a24; display: block;
+  }
+  .engine b { display: block; font-size: 14px; font-weight: 600; }
+  .engine span { display: block; color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+  .engine.active { border-color: var(--accent); background: #241d18; }
+  .engine.active b { color: var(--accent); }
+  .engine .key { color: var(--ok); }
+  .engine .nokey { color: #ff8b7a; }
 </style>
 </head>
 <body>
 <header>
   <h1>AUTOCAPTION</h1>
-  <span>word-timing JSON for the EffectCraft panel — everything runs on this machine</span>
+  <span>word-timing JSON for the EffectCraft panel — in your browser, on this machine, or through a free API</span>
 </header>
 
 <main>
@@ -89,44 +101,53 @@
       </div>
       <p class="small" id="fileinfo">No file chosen.</p>
 
-      <label class="field">Run the transcription on
-        <select id="where">
-          <option value="browser" selected>This browser (your own CPU)</option>
-          <option value="server">A server (this machine or the cloud)</option>
-        </select>
-      </label>
-      <p class="hint" id="modeNote">In the browser: the file never leaves this computer. The model is
-        downloaded once (40–250 MB) and then cached by the browser.</p>
+      <p class="small" style="margin:14px 0 0;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;font-size:11.5px">Transcribe with</p>
+      <div class="engines" id="engines">
+        <button class="engine" data-engine="deepgram" id="engDeepgram">
+          <b>Deepgram</b><span>whisper-large · $200 free credit</span>
+        </button>
+        <button class="engine" data-engine="browser" id="engBrowser">
+          <b>This browser</b><span>your own CPU · free · private</span>
+        </button>
+        <button class="engine" data-engine="local" id="engLocal">
+          <b>This machine</b><span>faster-whisper · free · nothing uploaded</span>
+        </button>
+        <button class="engine" data-engine="groq" id="engGroq">
+          <b>Groq</b><span>whisper-large-v3-turbo · free tier</span>
+        </button>
+        <button class="engine" data-engine="assemblyai" id="engAssembly">
+          <b>AssemblyAI</b><span>best · free tier</span>
+        </button>
+        <button class="engine" data-engine="openai" id="engOpenai">
+          <b>OpenAI</b><span>whisper-1 · paid</span>
+        </button>
+      </div>
+
+      <div class="grid" style="margin-top:12px">
+        <label class="field">Model
+          <select id="model"></select>
+        </label>
+        <label class="field">Language
+          <select id="language">
+            <option value="" selected>Auto-detect</option>
+            <option value="en">English</option><option value="de">German</option>
+            <option value="fr">French</option><option value="es">Spanish</option>
+            <option value="it">Italian</option><option value="nl">Dutch</option>
+            <option value="pt">Portuguese</option><option value="tr">Turkish</option>
+            <option value="pl">Polish</option><option value="ru">Russian</option>
+          </select>
+        </label>
+      </div>
+      <p class="hint" id="engineNote">Pick an engine above.</p>
+
+      <div class="row" style="margin-top:10px">
+        <button id="startService">Start the transcriber</button>
+        <span class="small" id="serviceState">checking…</span>
+      </div>
 
       <details>
-        <summary>Options</summary>
+        <summary>Line settings</summary>
         <div class="grid">
-          <label class="field">Model
-            <select id="model">
-              <option value="Xenova/whisper-base.en" selected>whisper-base.en — balanced</option>
-              <option value="Xenova/whisper-tiny.en">whisper-tiny.en — fastest</option>
-              <option value="Xenova/whisper-base">whisper-base — multilingual</option>
-              <option value="Xenova/whisper-small">whisper-small — most accurate</option>
-            </select>
-          </label>
-          <label class="field">Server model
-            <select id="serverModel">
-              <option value="small.en" selected>small.en</option>
-              <option value="small">small</option>
-              <option value="medium">medium</option>
-              <option value="large-v3">large-v3</option>
-            </select>
-          </label>
-          <label class="field">Language
-            <select id="language">
-              <option value="" selected>Auto-detect</option>
-              <option value="en">English</option><option value="de">German</option>
-              <option value="fr">French</option><option value="es">Spanish</option>
-              <option value="it">Italian</option><option value="nl">Dutch</option>
-              <option value="pt">Portuguese</option><option value="tr">Turkish</option>
-              <option value="pl">Polish</option><option value="ru">Russian</option>
-            </select>
-          </label>
           <label class="field">Words per line
             <input id="max_words" type="number" value="7" min="1" max="20">
           </label>
@@ -238,7 +259,113 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
 
-/* transcribe */
+/* ------------------------------------------------------------ engines */
+const ENGINES = {
+  deepgram: {
+    title: "Deepgram",
+    models: [["whisper-large", "whisper-large — best all-round"],
+             ["nova-3", "nova-3 — Deepgram's own model"]],
+    note: "Deepgram transcribes on its servers — the audio is uploaded. " +
+          "The free tier starts with $200 of credit."
+  },
+  browser: {
+    title: "This browser",
+    models: [["Xenova/whisper-base.en", "whisper-base.en — balanced"],
+             ["Xenova/whisper-tiny.en", "whisper-tiny.en — fastest"],
+             ["Xenova/whisper-base", "whisper-base — multilingual"],
+             ["Xenova/whisper-small", "whisper-small — most accurate"]],
+    note: "The file never leaves this computer: Whisper runs in this browser, on your own CPU " +
+          "(WebGPU when available). The model is downloaded once (40–250 MB) and then cached."
+  },
+  local: {
+    title: "This machine",
+    models: [["small.en", "small.en — English, fast"], ["small", "small — multilingual"],
+             ["medium", "medium — slower, better"], ["large-v3", "large-v3 — slowest, best"]],
+    note: "faster-whisper on the machine that serves this page. Nothing is uploaded."
+  },
+  groq: {
+    title: "Groq",
+    models: [["whisper-large-v3-turbo", "whisper-large-v3-turbo"]],
+    note: "Groq transcribes on its servers — the audio is uploaded. Free tier."
+  },
+  assemblyai: {
+    title: "AssemblyAI",
+    models: [["best", "best"], ["nano", "nano — cheapest"]],
+    note: "AssemblyAI transcribes on its servers — the audio is uploaded. Free tier."
+  },
+  openai: {
+    title: "OpenAI",
+    models: [["whisper-1", "whisper-1"]],
+    note: "OpenAI transcribes on its servers — the audio is uploaded. Paid."
+  }
+};
+
+let engine = "deepgram";          // the engine in use
+let providerInfo = {};            // what the server reports about its keys
+let healthPromise = Promise.resolve(null);   // resolves when we know about the server
+
+function engineKeyState(name) {
+  const info = providerInfo[name];
+  if (!info) return "";
+  if (!info.env) return "";
+  return info.ready ? '<span class="key">key set</span>' : '<span class="nokey">no key</span>';
+}
+
+function setEngine(name) {
+  if (!ENGINES[name]) return;
+  engine = name;
+  document.querySelectorAll(".engine").forEach(b => {
+    b.classList.toggle("active", b.dataset.engine === name);
+  });
+  const spec = ENGINES[name];
+  const sel = $("model");
+  sel.innerHTML = "";
+  spec.models.forEach(([value, label], i) => {
+    const opt = document.createElement("option");
+    opt.value = value; opt.textContent = label;
+    if (i === 0) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  let note = spec.note;
+  if (name !== "browser" && !serverAvailable) {
+    note = "The server is not reachable from here — start it with webapp/run.sh. " + note;
+  }
+  $("engineNote").innerHTML = note + " " + engineKeyState(name);
+}
+
+document.querySelectorAll(".engine").forEach(button => {
+  button.addEventListener("click", () => setEngine(button.dataset.engine));
+});
+setEngine(engine);
+
+/* ------------------------------------------------------------ the service */
+async function checkService() {
+  const state = $("serviceState");
+  try {
+    const r = await fetch("/api/transcriber", { cache: "no-store" });
+    const d = await r.json();
+    state.textContent = d.running
+      ? "the transcriber is running (the EffectCraft panel can use it)"
+      : "the transcriber is not running — start it here or in the panel";
+  } catch (e) {
+    state.textContent = "the transcriber state is unknown";
+  }
+}
+$("startService").addEventListener("click", async () => {
+  const state = $("serviceState");
+  state.textContent = "starting…";
+  try {
+    const r = await fetch("/api/start-transcriber", { method: "POST" });
+    const d = await r.json();
+    state.textContent = d.message || (d.ok ? "started" : "could not start it");
+  } catch (e) {
+    state.textContent = "could not start it";
+  }
+  checkService();
+});
+checkService();
+
+/* ---------------------------------------------------------------- transcribe */
 $("go").addEventListener("click", async () => {
   if (!chosen) return;
   const [lead, hold] = ($("leadhold").value.split("/") || ["0.05", "0.7"]).map(v => parseFloat(v) || 0);
@@ -247,22 +374,31 @@ $("go").addEventListener("click", async () => {
     maxChars: +$("max_chars").value || 38,
     pause: +$("pause").value || 1.0,
     lead: lead, hold: hold,
-    language: $("language").value || null
+    language: $("language").value || null,
+    model: $("model").value
   };
   $("go").disabled = true;
   $("progressBox").classList.remove("hidden");
   $("status").className = "status";
-  if ($("where").value === "browser") {
+  await healthPromise;             // the server may still be answering /api/health
+  if (engine === "browser") {
     try { await transcribeInBrowser(opts); }
     catch (e) { $("status").className = "status error"; $("status").textContent = String(e.message || e); $("go").disabled = false; }
     return;
   }
+  if (!serverAvailable) {
+    $("status").className = "status error";
+    $("status").textContent = "No server here — start it with webapp/run.sh, or use 'This browser'.";
+    $("go").disabled = false;
+    return;
+  }
   const q = new URLSearchParams({
-    name: chosen.name, model: $("serverModel").value, language: opts.language || "",
+    name: chosen.name, model: opts.model, language: opts.language || "",
+    provider: engine,
     max_words: opts.maxWords, max_chars: opts.maxChars,
     pause: opts.pause, lead: lead, hold: hold
   });
-  $("status").textContent = "Uploading…";
+  $("status").textContent = "Uploading to " + ENGINES[engine].title + "…";
   try {
     const r = await fetch("/api/transcribe?" + q.toString(), { method: "POST", body: chosen });
     const data = await r.json();
@@ -417,24 +553,28 @@ $("convert").addEventListener("click", async () => {
 });
 
 /* is there a server (this machine or the cloud) behind this page? */
-(async () => {
+healthPromise = (async () => {
+  let health = null;
   try {
     const r = await fetch("/api/health", { cache: "no-store" });
-    serverAvailable = r.ok;
+    if (r.ok) health = await r.json();
   } catch (e) {
-    serverAvailable = false;
+    health = null;
   }
-  const opt = $("where").querySelector('option[value="server"]');
-  if (!serverAvailable) {
-    $("where").value = "browser";
-    opt.disabled = true;
-    opt.textContent = "A server — not reachable from here";
-    $("modeNote").textContent = "In the browser: the file never leaves this computer. The model is " +
-      "downloaded once (40–250 MB) and then cached by the browser.";
-  } else {
-    $("modeNote").textContent = "In the browser: the file never leaves this computer. On a server: " +
-      "the file is uploaded to the machine that does the transcription.";
-  }
+  serverAvailable = !!(health && health.ok);
+  providerInfo = (health && health.providers) || {};
+  // show which providers have a key on the server
+  document.querySelectorAll(".engine").forEach(button => {
+    const name = button.dataset.engine;
+    const info = providerInfo[name];
+    const span = button.querySelector("span");
+    if (!info || !info.env) return;
+    span.innerHTML = span.innerHTML.replace(/<span class="(key|nokey)">.*?<\/span>/g, "") +
+      (info.ready ? '<span class="key">key set</span>' : '<span class="nokey">no key</span>');
+    if (!info.ready) button.title = "No API key on the server — add one with run-transcriber.sh --set-key";
+  });
+  setEngine(engine);
+  return health;
 })();
 
 /* copy */
